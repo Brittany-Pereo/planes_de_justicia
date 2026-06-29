@@ -12,10 +12,10 @@ mod_clues_query_ui <- function(id) {
   tagList(
     # Selector de CLUES
     uiOutput(ns("selector_clues")),
-
+    
     # Indicador de estado
     uiOutput(ns("estado_consulta")),
-
+    
     # graficas de productividad
     fluidRow(
       column(6, plotOutput(ns("grafica_general"), height = "280px")),
@@ -25,7 +25,7 @@ mod_clues_query_ui <- function(id) {
       column(6, plotOutput(ns("grafica_qx"), height = "280px")),
       column(6, plotOutput(ns("grafica_egresos"), height = "280px"))
     ),
-
+    
     # Botones de acción
     fluidRow(
       column(6,
@@ -49,7 +49,7 @@ mod_clues_query_ui <- function(id) {
 #' @param clues_info Data frame con información de CLUES
 mod_clues_query_server <- function(id, con, clues_info) {
   moduleServer(id, function(input, output, session) {
-
+    
     # Reactive values
     valores <- reactiveValues(
       datos = NULL,
@@ -58,7 +58,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
       cargando = FALSE,
       error = NULL
     )
-
+    
     val_personas <- reactiveValues(
       datos = NULL,
       clues_seleccionada = NULL,
@@ -66,8 +66,8 @@ mod_clues_query_server <- function(id, con, clues_info) {
       cargando = FALSE,
       error = NULL
     )
-
-
+    
+    
     # Obtener ruta al archivo Parquet
     parquet_path <- reactive({
       path <- system.file("app", "data", "Cubos_completos_2020_2025.parquet",
@@ -78,7 +78,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
       }
       return(path)
     })
-
+    
     personas_path <- reactive({
       path <- system.file("app", "data", "procedimientos_personas.parquet",
                           package = "pptx")
@@ -88,11 +88,11 @@ mod_clues_query_server <- function(id, con, clues_info) {
       }
       return(path)
     })
-
+    
     # Crear choices para el selector
     output$selector_clues <- renderUI({
       req(clues_info)
-
+      
       selectizeInput(
         inputId = session$ns("clues_select"),
         label = "Selecciona una unidad médica:",
@@ -105,19 +105,19 @@ mod_clues_query_server <- function(id, con, clues_info) {
         width = "100%"
       )
     })
-
+    
     # Observar cuando se selecciona una CLUES
     observeEvent(input$clues_select, {
       req(input$clues_select)
       req(parquet_path())
       req(personas_path())
       req(con())
-
+      
       # Guardar CLUES seleccionada
       valores$clues_seleccionada <- input$clues_select
       valores$cargando <- TRUE
       valores$error <- NULL
-
+      
       val_personas$clues_seleccionada <- input$clues_select
       val_personas$cargando <- TRUE
       val_personas$error <- NULL
@@ -126,12 +126,12 @@ mod_clues_query_server <- function(id, con, clues_info) {
         input$clues_select,
         clues_info
       )
-
+      
       # Mensaje informativo
       # cat("\n🔍 Consultando datos para CLUES:", input$clues_select, "\n")
       # cat("📌 CLUES relacionadas:",
       #     paste(clues_relacionadas, collapse = ", "), "\n")
-
+      
       # Construir consulta SQL
       consulta <- tryCatch({
         construir_consulta_clues(
@@ -145,7 +145,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
         valores$error <- paste("Error al construir consulta:", e$message)
         NULL
       })
-
+      
       if (!is.null(consulta)) {
         valores$consulta_actual <- consulta
         # Ejecutar consulta
@@ -153,22 +153,22 @@ mod_clues_query_server <- function(id, con, clues_info) {
           # Mostrar consulta en consola (para debugging)
           cat("\n📝 Consulta SQL ejecutada:\n")
           cat(consulta, "\n")
-
+          
           # Ejecutar consulta
           resultados <- dbGetQuery(con(), consulta)
-
+          
           if (nrow(resultados) > 0) {
             valores$datos <- resultados
-
+            
             print(names(valores$datos))
             print(head(valores$datos))
-
+            
             cat("\nColumnas de valores$datos:\n")
             print(names(valores$datos))
-
+            
             cat("\nPrimeras filas:\n")
             print(head(valores$datos))
-
+            
             cat("✅ Consulta exitosa. Registros obtenidos:",
                 nrow(resultados), "\n")
             cat("📊 Columnas:", paste(names(resultados), collapse = ", "), "\n")
@@ -179,14 +179,14 @@ mod_clues_query_server <- function(id, con, clues_info) {
             )
             valores$datos <- NULL
           }
-
+          
         }, error = function(e) {
           valores$error <- paste("Error al ejecutar consulta:", e$message)
           valores$datos <- NULL
           cat("❌", valores$error, "\n")
         })
       }
-
+      
       personas <- tryCatch({
         construir_consulta_personas(
           clues_seleccionada = input$clues_select,
@@ -204,17 +204,17 @@ mod_clues_query_server <- function(id, con, clues_info) {
           # Mostrar consulta en consola (para debugging)
           cat("\n📝 Consulta SQL ejecutada:\n")
           cat(personas, "\n")
-
+          
           # Ejecutar consulta
           resultados <- dbGetQuery(con(), personas)
-
+          
           if (nrow(resultados) > 0) {
             val_personas$datos <- resultados
-
+            
             print(val_personas$datos)
             str(val_personas$datos)
             View(as.data.frame(val_personas$datos))
-
+            
             cat("✅ Consulta exitosa. Registros obtenidos:",
                 nrow(resultados), "\n")
             cat("📊 Columnas:", paste(names(resultados), collapse = ", "), "\n")
@@ -225,19 +225,19 @@ mod_clues_query_server <- function(id, con, clues_info) {
             )
             val_personas$datos <- NULL
           }
-
+          
         }, error = function(e) {
           val_personas$error <- paste("Error al ejecutar consulta personas:", e$message)
           val_personas$datos <- NULL
           cat("❌", val_personas$error, "\n")
         })
       }
-
+      
       val_personas$cargando <- FALSE
       valores$cargando <- FALSE
-
+      
     })
-
+    
     # Botón de refrescar
     observeEvent(input$refrescar, {
       if (!is.null(valores$clues_seleccionada)) {
@@ -245,7 +245,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
         input$clues_select <- valores$clues_seleccionada
       }
     })
-
+    
     # Mostrar estado de la consulta
     output$estado_consulta <- renderUI({
       if (valores$cargando) {
@@ -266,7 +266,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
           valores$clues_seleccionada,
           clues_info
         )
-
+        
         div(
           class = "alert alert-success",
           icon("check-circle"),
@@ -278,22 +278,22 @@ mod_clues_query_server <- function(id, con, clues_info) {
         )
       }
     })
-
-
+    
+    
     excel_exportado <- reactive({
       req(input$clues_select)
-
+      
       clues_a_imprimir <- input$clues_select
-
-
+      
+      
       tabla_datos_imprimir <- crear_excel(clues_a_imprimir, valores$datos, val_personas$datos)
-
+      
       return(tabla_datos_imprimir)
     })
-
+    
     datos_anual_grafica <- reactive({
       req(valores$datos)
-
+      
       valores$datos %>%
         mutate(
           fecha = as.Date(fecha),
@@ -309,21 +309,21 @@ mod_clues_query_server <- function(id, con, clues_info) {
           .groups = "drop"
         )
     })
-
+    
     metas_filtrado_grafica <- reactive({
       req(input$clues_select)
-
+      
       metas %>%
         dplyr::filter(clues_imb == input$clues_select)
     })
-
+    
     crear_grafica_clues <- function(df, variable_sel, titulo,
                                     datos_anual_grafica, metas_filtrado) {
-
+      
       fecha_corte <- max(as.Date(df$fecha), na.rm = TRUE)
       mes_corte <- lubridate::month(fecha_corte)
       dia_corte <- lubridate::day(fecha_corte)
-
+      
       col_anual <- dplyr::case_when(
         variable_sel == "consulta_general" ~ "consulta_general_anual",
         variable_sel == "consulta_especialidad" ~ "consulta_especialidad_anual",
@@ -331,7 +331,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
         variable_sel == "egresos" ~ "egresos_anual",
         TRUE ~ NA_character_
       )
-
+      
       df_avance <- df %>%
         mutate(
           fecha = as.Date(fecha),
@@ -346,7 +346,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
           avance = sum(.data[[variable_sel]][fecha <= fecha_corte_anio], na.rm = TRUE),
           .groups = "drop"
         )
-
+      
       hay_2026 <- df %>%
         dplyr::mutate(anio = lubridate::year(as.Date(fecha))) %>%
         dplyr::filter(anio == 2026) %>%
@@ -355,9 +355,9 @@ mod_clues_query_server <- function(id, con, clues_info) {
           .groups = "drop"
         ) %>%
         dplyr::pull(hay)
-
+      
       if (length(hay_2026) == 0 || is.na(hay_2026)) hay_2026 <- FALSE
-
+      
       df_total <- datos_anual_grafica %>%
         dplyr::mutate(anio = as.numeric(anio)) %>%
         dplyr::filter(anio %in% c(2024, 2025, 2026)) %>%
@@ -378,7 +378,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
             TRUE ~ total_anual
           )
         )
-
+      
       df_plot <- df_avance %>%
         left_join(df_total, by = "anio") %>%
         mutate(
@@ -398,7 +398,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
             labels = c("Avance al corte", "Resto del año")
           )
         )
-
+      
       df_plot <- df_plot %>%
         mutate(
           color_barra = case_when(
@@ -407,14 +407,14 @@ mod_clues_query_server <- function(id, con, clues_info) {
             TRUE ~ "#1E5B4F"
           )
         )
-
+      
       etiquetas <- df_plot %>%
         group_by(anio) %>%
         summarise(
           total_anual = sum(valor, na.rm = TRUE),
           .groups = "drop"
         )
-
+      
       etiquetas_valores <- df_avance %>%
         left_join(df_total, by = "anio") %>%
         mutate(
@@ -424,7 +424,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
           etiqueta_pct = scales::percent(pct_avance, accuracy = 1),
           etiqueta_avance = scales::comma(avance)
         )
-
+      
       ggplot(df_plot, aes(x = anio, y = valor, fill = color_barra)) +
         geom_col(
           width = 0.65,
@@ -502,11 +502,11 @@ mod_clues_query_server <- function(id, con, clues_info) {
           panel.grid.minor = element_blank()
         )
     }
-
+    
     datos_anual_grafica_personas <- reactive({
       req(datos_personas_grafica())
       req(datos_anual_grafica())
-
+      
       anual_personas <- datos_personas_grafica() %>%
         mutate(anio = lubridate::year(fecha)) %>%
         group_by(anio) %>%
@@ -517,19 +517,19 @@ mod_clues_query_server <- function(id, con, clues_info) {
           egresos_anual = sum(egresos, na.rm = TRUE),
           .groups = "drop"
         )
-
+      
       historico_2024_2025 <- datos_anual_grafica() %>%
         filter(anio %in% c(2024, 2025))
-
+      
       anual_personas %>%
         filter(anio == 2026) %>%
         bind_rows(historico_2024_2025) %>%
         arrange(anio)
     })
-
+    
     datos_personas_grafica <- reactive({
       req(val_personas$datos)
-
+      
       val_personas$datos %>%
         mutate(
           anio = as.numeric(fecha),
@@ -555,10 +555,10 @@ mod_clues_query_server <- function(id, con, clues_info) {
           values_fill = 0
         )
     })
-
+    
     output$grafica_general <- renderPlot({
       req(datos_personas_grafica(), datos_anual_grafica_personas(), metas_filtrado_grafica())
-
+      
       crear_grafica_clues(
         datos_personas_grafica(),
         "consulta_general",
@@ -567,10 +567,10 @@ mod_clues_query_server <- function(id, con, clues_info) {
         metas_filtrado_grafica()
       )
     })
-
+    
     output$grafica_especialidad <- renderPlot({
       req(datos_personas_grafica(), datos_anual_grafica_personas(), metas_filtrado_grafica())
-
+      
       crear_grafica_clues(
         datos_personas_grafica(),
         "consulta_especialidad",
@@ -579,10 +579,10 @@ mod_clues_query_server <- function(id, con, clues_info) {
         metas_filtrado_grafica()
       )
     })
-
+    
     output$grafica_qx <- renderPlot({
       req(datos_personas_grafica(), datos_anual_grafica_personas(), metas_filtrado_grafica())
-
+      
       crear_grafica_clues(
         datos_personas_grafica(),
         "procedimientos_qx",
@@ -591,10 +591,10 @@ mod_clues_query_server <- function(id, con, clues_info) {
         metas_filtrado_grafica()
       )
     })
-
+    
     output$grafica_egresos <- renderPlot({
       req(datos_personas_grafica(), datos_anual_grafica_personas(), metas_filtrado_grafica())
-
+      
       crear_grafica_clues(
         datos_personas_grafica(),
         "egresos",
@@ -619,7 +619,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
         # openxlsx::write.xlsx(valores$datos, file)
       }
     )
-
+    
     # Descargar datos
     output$btn_crear_pptx <- downloadHandler(
       filename = function() {
@@ -634,21 +634,21 @@ mod_clues_query_server <- function(id, con, clues_info) {
         req(valores$datos)
         req(val_personas$datos)
         req(valores$clues_seleccionada)
-
+        
         showNotification(
           "Generando informe en PowerPoint...",
           type = "default",
           duration = 3,
           session = session
         )
-
+        
         datos_consulta <- list(
           datos = valores$datos,
           resumen = val_personas$datos,
           clues_seleccionada = valores$clues_seleccionada,
           consulta = valores$consulta_actual
         )
-
+        
         presentacion <- crear_reporte_productividad(
           codigo_clues = datos_consulta$clues_seleccionada,
           clues_info = clues_info,
@@ -660,13 +660,13 @@ mod_clues_query_server <- function(id, con, clues_info) {
             package = "pptx"
           )
         )
-
+        
         archivo_tmp <- tempfile(fileext = ".pptx")
-
+        
         print(presentacion, target = archivo_tmp)
-
+        
         file.copy(archivo_tmp, file, overwrite = TRUE)
-
+        
         showNotification(
           "¡Informe generado exitosamente!",
           type = "default",
