@@ -5,9 +5,9 @@ account: ceciliapereo
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 17593930
-bundleId: 12240603
+bundleId: 12240988
 url: https://ceciliapereo.shinyapps.io/planes_de_justicia/
 version: 1
 asMultiple: FALSE
 asStatic: FALSE
-ignoredFiles: LICENSE|LICENSE.md|renv.lock.bak|vignettes/pptx.Rmd|man|tests
+ignoredFiles: inst/golem-config.yml|inst/WORDLIST|LICENSE|LICENSE.md|renv.lock.bak|vignettes/pptx.Rmd|man|tests

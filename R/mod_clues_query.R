@@ -45,7 +45,8 @@ mod_clues_query_ui <- function(id) {
 }
 
 
-mod_clues_query_server <- function(id, con, clues_info, metas_clues) {
+mod_clues_query_server <- function(id, con, 
+                                   clues_info, metas_clues) {
   if (!exists("clues_info", inherits = TRUE)) {
     load("R/sysdata.rda")
   }
@@ -464,17 +465,22 @@ mod_clues_query_server <- function(id, con, clues_info, metas_clues) {
     
     output$descargar_datos <- downloadHandler(
       filename = function() {
-        paste0(
-          "datos_clues_",
-          valores$clues_seleccionada,
-          "_",
-          Sys.Date(),
-          ".xlsx"
-        )
+        paste0("datos_planes_justicia_", Sys.Date(), ".xlsx")
       },
       content = function(file) {
         req(valores$datos)
-        openxlsx::saveWorkbook(excel_exportado(), file, overwrite = TRUE)
+        
+        wb <- crear_excel(
+          CLUES = valores$clues_seleccionada,
+          ampliado = valores$datos,
+          resumen = NULL
+        )
+        
+        openxlsx::saveWorkbook(
+          wb,
+          file = file,
+          overwrite = TRUE
+        )
       }
     )
     
@@ -506,9 +512,11 @@ mod_clues_query_server <- function(id, con, clues_info, metas_clues) {
           metas = metas_clues,
           historicos = valores$datos,
           procedimientos_personas = NULL,
-          ruta_master = system.file(
-            "inst", "app", "data", "master_presentacion.pptx",
-            package = "planesdejusticia"
+          ruta_master = file.path(
+            "inst",
+            "app",
+            "data",
+            "master_presentacion.pptx"
           )
         )
         
