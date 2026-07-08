@@ -91,21 +91,32 @@ mod_clues_query_server <- function(id, con, clues_info) {
     
     # Crear choices para el selector
     output$selector_clues <- renderUI({
-      req(clues_info)
       
-      selectizeInput(
-        inputId = session$ns("clues_select"),
-        label = "Selecciona una unidad médica:",
+      ns <- session$ns
+      
+      choices_etiquetas <- clues_info %>%
+        dplyr::mutate(
+          etiqueta = paste0(clues, " - ", nombre)
+        ) %>%
+        dplyr::arrange(entidad, nombre) %>%
+        dplyr::pull(etiqueta, name = clues)
+      
+      choices_etiquetas <- c(
+        "NACIONAL" = "NACIONAL",
+        choices_etiquetas
+      )
+      
+      shiny::selectizeInput(
+        ns("clues_select"),
+        "Selecciona CLUES:",
         choices = choices_etiquetas,
-        selected =  "NACIONAL",
+        selected = "NACIONAL",
         options = list(
-          placeholder = 'Escribe para buscar...',
-          maxOptions = 100
-        ),
-        width = "100%"
+          placeholder = "Busca por CLUES o nombre de unidad",
+          maxOptions = 1000
+        )
       )
     })
-    
     # Observar cuando se selecciona una CLUES
     observeEvent(input$clues_select, {
       req(input$clues_select)
