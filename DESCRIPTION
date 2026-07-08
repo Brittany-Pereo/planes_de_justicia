@@ -5,7 +5,7 @@ Authors@R:
     person("Armando", "González Díaz", email="armando.gonzalez@imssbienestar.gob.mx", role = c("aut", "cre"))
 Description: PKG_DESC.
 License: MIT + file LICENSE
-Imports: 
+Imports:
     config,
     DBI,
     duckdb,
@@ -30,7 +30,8 @@ Imports:
     purrr,
     rlang,
     tibble,
-    grid
+    grid,
+    magrittr
 Encoding: UTF-8
 LazyData: true
 Suggests: 

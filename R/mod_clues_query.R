@@ -52,7 +52,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
     parquet_path <- reactive({
       path <- system.file(
         "app", "data", "Cubos_completos_2020_2025.parquet",
-        package = "pptx"
+        package = "planesdejusticia"
       )
       
       if (path == "") {
@@ -494,8 +494,8 @@ mod_clues_query_server <- function(id, con, clues_info) {
           historicos = valores$datos,
           procedimientos_personas = NULL,
           ruta_master = system.file(
-            "app", "data", "master_presentacion.pptx",
-            package = "pptx"
+            "inst", "app", "data", "master_presentacion.pptx",
+            package = "planesdejusticia"
           )
         )
         
