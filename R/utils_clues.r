@@ -10,76 +10,55 @@
 #' @return Vector con la(s) CLUES a consultar
 #'
 #' @export
+# R/utils_clues.R
+
 obtener_clues_relacionadas <- function(clues_seleccionada, clues_info) {
-  
-  # Ahora ya no hacemos traducción:
-  # el valor seleccionado es el mismo que se consulta
-  
   return(clues_seleccionada)
 }
 
-#' Construir cláusula IN para SQL
-#'
-#' @param clues_seleccionada Código CLUES seleccionado
-#' @param clues_info Data frame con información de CLUES
-#' @return String con formato SQL para cláusula IN
-#'
-#' @export
 construir_clausula_in <- function(clues_seleccionada, clues_info) {
-  # Obtener CLUES relacionadas
-  clues_vector <- obtener_clues_relacionadas(clues_seleccionada, clues_info)
   
-  # Construir la cláusula IN con formato SQL
-  # Ejemplo: ('CLUES1', 'CLUES2')
-  valores <- paste0("'", clues_vector, "'", collapse = ", ")
-  clausula <- paste0("(", valores, ")")
+  clues_seleccionada <- gsub("'", "''", clues_seleccionada)
   
-  return(clausula)
+  valores <- paste0("'", clues_seleccionada, "'", collapse = ", ")
+  paste0("(", valores, ")")
 }
 
-#' Construir consulta SQL completa
-#'
-#' @param clues_seleccionada Código CLUES seleccionado
-#' @param clues_info Data frame con información de CLUES
-#' @param parquet_path Ruta al archivo Parquet
-#' @param columnas Columnas a seleccionar (NULL = todas)
-#' @param limite Límite de registros (NULL = sin límite)
-#' @return String con la consulta SQL
-#'
-#' @export
 construir_consulta_clues <- function(clues_seleccionada,
                                      clues_info,
                                      parquet_path,
-                                     # columnas = NULL,
                                      limite = NULL) {
   
-  # Construir cláusula IN
   clausula_in <- construir_clausula_in(clues_seleccionada, clues_info)
   
-  # # Definir columnas a seleccionar
-  # columnas_str <- if (!is.null(columnas)) {
-  #   paste(columnas, collapse = ", ")
-  # } else {
-  #   "*"
-  # }
+  filtro_plan <- if (
+    is.null(clues_seleccionada) ||
+    length(clues_seleccionada) == 0 ||
+    clues_seleccionada == "NACIONAL"
+  ) {
+    "WHERE fecha IS NOT NULL"
+  } else {
+    sprintf(
+      "WHERE \"plan de justicia\" IN %s
+       AND fecha IS NOT NULL",
+      clausula_in
+    )
+  }
   
-  # Construir la consulta SQL
   consulta <- sprintf("
     SELECT
-    fecha,
-    SUM(CAST(consultas_totales AS INT)) AS consulta_total,
-    SUM(CAST(consultas_generales AS INT)) AS consulta_general,
-    SUM(CAST(consultas_de_especialidad AS INT)) AS consulta_especialidad,
-    SUM(CAST(procedimientos_quirurgicos AS INT)) AS procedimientos_qx,
-        SUM(CAST(egresos AS INT)) AS egresos
+      fecha,
+      SUM(CAST(consultas_totales AS INT)) AS consulta_total,
+      SUM(CAST(consultas_generales AS INT)) AS consulta_general,
+      SUM(CAST(consultas_de_especialidad AS INT)) AS consulta_especialidad,
+      SUM(CAST(procedimientos_quirurgicos AS INT)) AS procedimientos_qx,
+      SUM(CAST(egresos AS INT)) AS egresos
     FROM parquet_scan('%s')
-    WHERE clues IN %s
-     AND fecha IS NOT NULL
+    %s
     GROUP BY fecha
     ORDER BY fecha
-  ",  parquet_path, clausula_in)
+  ", parquet_path, filtro_plan)
   
-  # Agregar límite si se especifica
   if (!is.null(limite)) {
     consulta <- paste(consulta, sprintf("LIMIT %d", limite))
   }
@@ -95,87 +74,95 @@ construir_consulta_personas <- function(clues_seleccionada,
   if (length(clues_seleccionada) == 0 || is.null(clues_seleccionada)) {
     stop("clues_seleccionada no puede estar vacío")
   }
-  clausula_in <- clues_seleccionada
   
-  # Construir la consulta SQL
   consulta <- sprintf("
     SELECT
-    anio_insert AS fecha,
-    tipo_procedimiento,
-    procedimientos,
-    personas
+      anio_insert AS fecha,
+      tipo_procedimiento,
+      procedimientos,
+      personas
     FROM parquet_scan('%s')
     WHERE id = '%s'
     ORDER BY tipo_procedimiento, fecha
-  ",  parquet_path, clausula_in)
+  ", parquet_path, clues_seleccionada)
   
-  # Agregar límite si se especifica
   return(consulta)
 }
 
-crear_excel <- function(CLUES, ampliado, resumen) {
+crear_excel <- function(CLUES, ampliado, resumen = NULL) {
   
-  wb <- createWorkbook()
+  wb <- openxlsx::createWorkbook()
   
   info_sel <- clues_info |>
-    dplyr::filter(.data$clues_imb == CLUES) |>
+    dplyr::filter(.data$clues == CLUES | .data$id == CLUES) |>
     dplyr::slice(1)
   
-  addWorksheet(wb, "resumen")
+  if (nrow(info_sel) == 0) {
+    info_sel <- tibble::tibble(
+      nombre = CLUES,
+      entidad = ifelse(CLUES == "NACIONAL", "NACIONAL", NA_character_),
+      nivel_atencion = NA_character_,
+      categoria_gerencial = NA_character_,
+      estatus_de_operacion = NA_character_
+    )
+  }
   
-  writeData(wb, sheet = "resumen", x = CLUES, startCol = 1, startRow = 1)
-  
-  writeData(
-    wb,
-    sheet = "resumen",
-    x = info_sel$nombre_de_la_unidad,
-    startCol = 1,
-    startRow = 2
+  tabla_info <- tibble::tibble(
+    campo = c(
+      "Selección",
+      "Nombre",
+      "Entidad",
+      "Nivel de atención",
+      "Categoría gerencial",
+      "Estatus de operación",
+      "Fecha de corte"
+    ),
+    valor = c(
+      CLUES,
+      info_sel$nombre,
+      info_sel$entidad,
+      info_sel$nivel_atencion,
+      info_sel$categoria_gerencial,
+      info_sel$estatus_de_operacion,
+      format(Sys.Date(), "%d/%m/%Y")
+    )
   )
   
-  writeData(
+  resumen_anual <- ampliado |>
+    dplyr::mutate(
+      anio = lubridate::year(as.Date(fecha))
+    ) |>
+    dplyr::group_by(anio) |>
+    dplyr::summarise(
+      dplyr::across(
+        where(is.numeric),
+        ~ sum(.x, na.rm = TRUE)
+      ),
+      .groups = "drop"
+    ) |>
+    dplyr::arrange(anio)
+  
+  openxlsx::addWorksheet(wb, "resumen")
+  
+  openxlsx::writeData(
     wb,
     sheet = "resumen",
-    x = info_sel$entidad,
+    x = tabla_info,
     startCol = 1,
-    startRow = 3
+    startRow = 1
   )
   
-  writeData(
+  openxlsx::writeData(
     wb,
     sheet = "resumen",
-    x = info_sel$nivel_atencion,
+    x = resumen_anual,
     startCol = 1,
-    startRow = 4
+    startRow = 10
   )
   
-  writeData(
-    wb,
-    sheet = "resumen",
-    x = info_sel$categoria_gerencial,
-    startCol = 1,
-    startRow = 5
-  )
+  openxlsx::addWorksheet(wb, "productividad detalle")
   
-  writeData(
-    wb,
-    sheet = "resumen",
-    x = format(fecha_corte, "Fecha de corte: %d/%m/%Y"),
-    startCol = 1,
-    startRow = 6
-  )
-  
-  writeData(
-    wb,
-    sheet = "resumen",
-    x = resumen,
-    startCol = 1,
-    startRow = 8
-  )
-  
-  addWorksheet(wb, "productividad detalle")
-  
-  writeData(
+  openxlsx::writeData(
     wb,
     sheet = "productividad detalle",
     x = ampliado

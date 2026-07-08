@@ -936,17 +936,38 @@ crear_reporte_productividad <- function(
   fecha_portada <- format(fecha_corte, "%d de %B de %Y")
   mes_nombre <- stringr::str_to_title(format(fecha_corte, "%B"))
 
-  # Filtrado por unidad ----------------------------------------------------
-  clues_info_filtrado <- clues_info %>%
-    dplyr::filter(clues_imb == codigo_clues)
-
-  metas_filtrado <- metas %>%
-    dplyr::filter(clues_imb == codigo_clues)
-
-  if (nrow(metas_filtrado) == 0) {
-    stop(paste0("No hay metas para la CLUES: ", codigo_clues))
+   # Filtrado por plan / nacional -------------------------------------------
+  
+  if (codigo_clues == "NACIONAL") {
+    
+    clues_info_filtrado <- tibble::tibble(
+      clues = "NACIONAL",
+      nombre = "NACIONAL",
+      entidad = "NACIONAL"
+    )
+    
+    metas_filtrado <- metas
+    
+  } else {
+    
+    clues_info_filtrado <- clues_info %>%
+      dplyr::filter(.data$clues == codigo_clues | .data$id == codigo_clues)
+    
+    metas_filtrado <- metas %>%
+      dplyr::filter(.data$clues == codigo_clues)
   }
-
+  
+  if (nrow(metas_filtrado) == 0) {
+    stop(paste0("No hay metas para: ", codigo_clues))
+  }
+  
+  if (nrow(clues_info_filtrado) == 0) {
+    clues_info_filtrado <- tibble::tibble(
+      clues = codigo_clues,
+      nombre = codigo_clues,
+      entidad = NA_character_
+    )
+  }
   meta_total_consultas <- sum(
     dplyr::coalesce(metas_filtrado$meta_general_anual, 0),
     dplyr::coalesce(metas_filtrado$meta_especialidad_anual, 0),
@@ -958,6 +979,31 @@ crear_reporte_productividad <- function(
     na.rm = TRUE
   )
 
+  if (is.null(procedimientos_personas)) {
+    
+    procedimientos_personas <- historicos %>%
+      dplyr::mutate(anio = lubridate::year(as.Date(fecha))) %>%
+      dplyr::group_by(anio) %>%
+      dplyr::summarise(
+        total_consultas = sum(consulta_total, na.rm = TRUE),
+        consulta_gral = sum(consulta_general, na.rm = TRUE),
+        consulta_esp = sum(consulta_especialidad, na.rm = TRUE),
+        qx = sum(procedimientos_qx, na.rm = TRUE),
+        egresos = sum(egresos, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      tidyr::pivot_longer(
+        cols = c(total_consultas, consulta_gral, consulta_esp, qx, egresos),
+        names_to = "tipo_procedimiento",
+        values_to = "procedimientos"
+      ) %>%
+      dplyr::mutate(
+        fecha = anio,
+        personas = procedimientos
+      ) %>%
+      dplyr::select(fecha, tipo_procedimiento, procedimientos, personas)
+  }
+  
   procedimientos_personas <- procedimientos_personas %>%
     dplyr::mutate(
       tipo_procedimiento = dplyr::case_when(
@@ -982,9 +1028,8 @@ crear_reporte_productividad <- function(
     officer::add_slide(layout = "Portada 3", master = "Tema de Office") %>%
     officer::ph_with(
       paste0(
-        "Reporte de productividad médica\n",
-        stringr::str_to_title(clues_info_filtrado$nombre_de_la_unidad[1]),
-        " (", clues_info_filtrado$clues_imb[1], ")"
+        "Reporte de ",
+        stringr::str_to_title(clues_info_filtrado$clues[1])
       ),
       location = officer::ph_location_label("Título 1")
     ) %>%

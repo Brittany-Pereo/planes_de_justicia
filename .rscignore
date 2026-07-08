@@ -1,0 +1,9 @@
+renv.lock
+.RData
+renv/
+tests/
+vignettes/
+README.Rmd
+README.md
+NEWS.md
+CODE_OF_CONDUCT.md

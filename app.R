@@ -2,14 +2,14 @@
 # To deploy, run: rsconnect::deployApp()
 # Or use the blue button on top of this file
 #mE localiza en la carpeta
-setwd("C:/Users/brittany.pereo/GitHub/planes_de_justicia")
+#setwd("C:/Users/brittany.pereo/GitHub/planes_de_justicia")
 
-#Corre las funciones
-pkgload::load_all(export_all = FALSE,
-                  helpers = FALSE,attach_testthat = FALSE)
-options( "golem.app.prod" = TRUE)
+options("golem.app.prod" = TRUE)
 
-#Aqui arranca la funsión
-pptx::run_app() # add parameters here (if any)
+pkgload::load_all(
+  export_all = FALSE,
+  helpers = FALSE,
+  attach_testthat = FALSE
+)
 
-
+run_app()

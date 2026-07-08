@@ -1,4 +1,4 @@
-Package: pptx
+Package: planesdejusticia
 Title: PKG_TITLE
 Version: 0.0.0.9000
 Authors@R: 
@@ -16,18 +16,26 @@ Imports:
     shinydashboard,
     DT,
     glue,
-    pkgload, 
-    stats, 
-    arrow, 
-    openxlsx, 
-    lubridate
+    pkgload,
+    stats,
+    arrow,
+    openxlsx,
+    lubridate,
+    officer,
+    flextable,
+    rvg,
+    scales,
+    stringr,
+    tidyr,
+    purrr,
+    rlang,
+    tibble,
+    grid
 Encoding: UTF-8
 LazyData: true
 Suggests: 
     knitr,
-    rmarkdown,
-    spelling,
-    testthat (>= 3.0.0)
+    rmarkdown
 Config/testthat/edition: 3
 Language: es-MX
 Depends: 
