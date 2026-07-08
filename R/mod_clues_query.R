@@ -199,7 +199,8 @@ mod_clues_query_server <- function(id, con,
       crear_excel(
         CLUES = input$clues_select,
         ampliado = valores$datos,
-        resumen = NULL
+        resumen = NULL,
+        clues_info = clues_info
       )
     })
     

@@ -89,7 +89,7 @@ construir_consulta_personas <- function(clues_seleccionada,
   return(consulta)
 }
 
-crear_excel <- function(CLUES, ampliado, resumen = NULL) {
+crear_excel <- function(CLUES, ampliado, resumen = NULL, clues_info) {
   
   wb <- openxlsx::createWorkbook()
   

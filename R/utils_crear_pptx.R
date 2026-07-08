@@ -50,28 +50,28 @@ crear_card_institucional <- function(
   mostrar_comparativos <- !is.null(var_vs_2025) && !is.null(var_vs_2024)
 
   rvg::dml(code = {
-    grid.newpage()
+    grid::grid.newpage()
 
     # Card base
-    grid.roundrect(
+    grid::grid.roundrect(
       x = 0.5, y = 0.5, width = 0.98, height = 0.98,
-      r = unit(10, "pt"),
-      gp = gpar(fill = "white", col = col_borde, lwd = 1)
+      r = grid::unit(10, "pt"),
+      gp = grid::gpar(fill = "white", col = col_borde, lwd = 1)
     )
 
     # Línea lateral
-    grid.rect(
+    grid::grid.rect(
       x = 0.035, y = 0.5,
       width = 0.020, height = 0.90,
-      gp = gpar(fill = acento, col = NA)
+      gp = grid::gpar(fill = acento, col = NA)
     )
 
     # Número
-    grid.text(
+    grid::grid.text(
       fmt_num(numero),
       x = 0.07, y = 0.73,
       just = c("left","center"),
-      gp = gpar(
+      gp = grid::gpar(
         col = col_dorado,
         fontsize = size_num,
         fontface = "bold",
@@ -80,11 +80,11 @@ crear_card_institucional <- function(
     )
 
     # Título
-    grid.text(
+    grid::grid.text(
       titulo,
       x = 0.07, y = 0.44,
       just = c("left","center"),
-      gp = gpar(
+      gp = grid::gpar(
         col = col_texto,
         fontsize = size_titulo,
         fontface = "bold",
@@ -95,27 +95,27 @@ crear_card_institucional <- function(
     if (mostrar_comparativos) {
       # ---------- Línea vs 2025
       label_25 <- paste0(d25$icon, "vs 2025 ")
-      x0 <- unit(0.07, "npc")
-      y1 <- unit(0.22, "npc")
+      x0 <- grid::unit(0.07, "npc")
+      y1 <- grid::unit(0.22, "npc")
 
-      grid.text(
+      grid::grid.text(
         label_25,
         x = x0, y = y1,
         just = c("left","center"),
-        gp = gpar(
+        gp = grid::gpar(
           col = col_muted,
           fontsize = size_delta,
           fontfamily = "Calibri"
         )
       )
 
-      x_pct_25 <- x0 + stringWidth(label_25)
+      x_pct_25 <- x0 + grid::stringWidth(label_25)
 
-      grid.text(
+      grid::grid.text(
         d25$label,
         x = x_pct_25, y = y1,
         just = c("left","center"),
-        gp = gpar(
+        gp = grid::gpar(
           col = d25$col,
           fontsize = size_delta,
           fontface = "bold",
@@ -125,26 +125,26 @@ crear_card_institucional <- function(
 
       # ---------- Línea vs 2024
       label_24 <- paste0(d24$icon, "vs 2024 ")
-      y2 <- unit(0.11, "npc")
+      y2 <- grid::unit(0.11, "npc")
 
-      grid.text(
+      grid::grid.text(
         label_24,
         x = x0, y = y2,
         just = c("left","center"),
-        gp = gpar(
+        gp = grid::gpar(
           col = col_muted,
           fontsize = size_delta,
           fontfamily = "Calibri"
         )
       )
 
-      x_pct_24 <- x0 + stringWidth(label_24)
+      x_pct_24 <- x0 + grid::stringWidth(label_24)
 
-      grid.text(
+      grid::grid.text(
         d24$label,
         x = x_pct_24, y = y2,
         just = c("left","center"),
-        gp = gpar(
+        gp = grid::gpar(
           col = d24$col,
           fontsize = size_delta,
           fontface = "bold",
@@ -853,7 +853,7 @@ grafica_consultas_periodos <- function(df,
       y = ymin * 0.95, yend = ymax * 1.02,
       linewidth = 1.0,
       colour = verde_punto,
-      arrow = arrow(length = unit(0.22, "cm"))
+      arrow = arrow(length = grid::unit(0.22, "cm"))
     ) +
 
     annotate(
@@ -888,7 +888,7 @@ grafica_consultas_periodos <- function(df,
       fontface = "bold",
       label.size = 0,
       size = 3.8,
-      label.padding = unit(0.35, "lines")
+      label.padding = grid::unit(0.35, "lines")
     ) +
 
     scale_y_continuous(
