@@ -1,4 +1,11 @@
 # R/mod_clues_query.R
+# R/mod_clues_query.R
+
+#' @importFrom magrittr %>%
+# R/mod_clues_query.R
+
+library(magrittr)
+library(dplyr)
 
 mod_clues_query_ui <- function(id) {
   ns <- NS(id)
@@ -39,6 +46,9 @@ mod_clues_query_ui <- function(id) {
 
 
 mod_clues_query_server <- function(id, con, clues_info) {
+  if (!exists("clues_info", inherits = TRUE)) {
+    load("R/sysdata.rda")
+  }
   moduleServer(id, function(input, output, session) {
     
     valores <- reactiveValues(
@@ -64,6 +74,9 @@ mod_clues_query_server <- function(id, con, clues_info) {
     })
     
     output$selector_clues <- renderUI({
+      
+      `%>%` <- magrittr::`%>%`
+      
       ns <- session$ns
       
       choices_etiquetas <- clues_info %>%
@@ -88,7 +101,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
         choices = choices_etiquetas,
         selected = "NACIONAL",
         options = list(
-          placeholder = "Busca por CLUES o nombre de unidad",
+          placeholder = "Busca por plan de justicia",
           maxOptions = 1000
         )
       )

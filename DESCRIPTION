@@ -7,8 +7,8 @@ Description: PKG_DESC.
 License: MIT + file LICENSE
 Imports:
     config,
-    DBI,
     duckdb,
+    DBI,
     dplyr,
     ggplot2,
     golem,
