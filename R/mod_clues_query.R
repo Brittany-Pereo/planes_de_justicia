@@ -474,7 +474,8 @@ mod_clues_query_server <- function(id, con,
         wb <- crear_excel(
           CLUES = valores$clues_seleccionada,
           ampliado = valores$datos,
-          resumen = NULL
+          resumen = NULL,
+          clues_info = clues_info
         )
         
         openxlsx::saveWorkbook(
