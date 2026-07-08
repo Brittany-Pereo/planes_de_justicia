@@ -38,9 +38,9 @@ app_server <- function(input, output, session) {
   datos_consulta <- mod_clues_query_server(
     id = "consulta_clues",
     con = con,
-    clues_info = clues_info
+    clues_info = clues_info,
+    metas_clues = metas_clues
   )
-  
   # 4. UI del módulo
   output$modulo_consulta <- renderUI({
     mod_clues_query_ui("consulta_clues")

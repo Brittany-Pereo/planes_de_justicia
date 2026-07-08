@@ -45,7 +45,7 @@ mod_clues_query_ui <- function(id) {
 }
 
 
-mod_clues_query_server <- function(id, con, clues_info) {
+mod_clues_query_server <- function(id, con, clues_info, metas_clues) {
   if (!exists("clues_info", inherits = TRUE)) {
     load("R/sysdata.rda")
   }
