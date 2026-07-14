@@ -452,9 +452,30 @@ def _ph_por_nombre(contenedor, nombre):
     return None
 
 
+def _ph_en_slide_por_nombre(slide, layout, nombre):
+    """Busca en `slide` el placeholder correspondiente al `nombre` definido
+    en `layout`.
+
+    python-pptx NO conserva el nombre personalizado del placeholder al
+    clonarlo del layout hacia la diapositiva (p. ej. "Título 1" del layout
+    se vuelve "Title 1" en la diapositiva) — solo conserva el `idx`. Por
+    eso se resuelve el idx en el layout y se busca ese idx en la
+    diapositiva, en vez de comparar nombres directamente en la diapositiva.
+    """
+    lp = _ph_por_nombre(layout, nombre)
+    if lp is None:
+        # Por si acaso el nombre sí se conservó (compatibilidad).
+        return _ph_por_nombre(slide, nombre)
+    idx = lp.placeholder_format.idx
+    for ph in slide.placeholders:
+        if ph.placeholder_format.idx == idx:
+            return ph
+    return None
+
+
 def _geom_placeholder(slide, layout, nombre):
     """Devuelve (placeholder_en_slide, (L, T, W, H)) con herencia del layout."""
-    ph = _ph_por_nombre(slide, nombre)
+    ph = _ph_en_slide_por_nombre(slide, layout, nombre)
     lp = _ph_por_nombre(layout, nombre)
     ref = ph if ph is not None else lp
     if ref is None:
@@ -475,9 +496,7 @@ def _quitar_placeholder(ph):
 
 
 def _set_texto_placeholder(slide, layout, nombre, texto):
-    ph = _ph_por_nombre(slide, nombre)
-    if ph is None:
-        ph, _ = _geom_placeholder(slide, layout, nombre)
+    ph = _ph_en_slide_por_nombre(slide, layout, nombre)
     if ph is not None:
         ph.text = texto
 
