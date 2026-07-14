@@ -5,9 +5,9 @@ Los 3 archivos en `data/` son la fuente de verdad y se actualizan a mano
 (se reemplazan y se hace `git push`; Streamlit Community Cloud vuelve a
 desplegar automáticamente con cada push, sin pasos manuales adicionales):
 
-    cubos_completos_plan_justicia.xlsx        -> histórico de productividad
-    metas_planes_justicia.xlsx                -> catálogo de CLUES + metas anuales
-    procedimientos_personas_plan_justicia.xlsx -> procedimientos/personas (no usado aún)
+    cubos_completos_plan_justicia.xlsx         -> histórico de productividad
+    metas_planes_justicia.xlsx                 -> catálogo de planes de justicia + metas anuales
+    procedimientos_personas_plan_justicia.xlsx -> personas atendidas por procedimiento/año
 """
 
 from __future__ import annotations
@@ -58,14 +58,19 @@ def cargar_metas_clues() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def opciones_selector_clues() -> dict:
-    """Devuelve {etiqueta: clues} ordenado por entidad/nombre, con NACIONAL primero."""
+    """Devuelve {etiqueta: plan_de_justicia} ordenado por entidad/nombre, con NACIONAL primero.
+
+    La etiqueta y el valor son el nombre del plan de justicia tal como
+    aparece en metas_planes_justicia.xlsx (columna clues_imb) — no un
+    código CLUES.
+    """
     info = cargar_clues_info().copy()
     info["etiqueta"] = info.apply(
         lambda r: r["clues"] if pd.isna(r["nombre"]) or str(r["nombre"]).strip() == ""
         else f"{r['clues']} - {r['nombre']}",
         axis=1,
     )
-    info = info.sort_values(["entidad", "nombre"], na_position="last")
+    info = info.sort_values(["entidad", "clues"], na_position="last")
 
     opciones = {"NACIONAL": "NACIONAL"}
     for _, row in info.iterrows():
@@ -95,3 +100,29 @@ def consultar_datos(clues_seleccionada: str) -> pd.DataFrame:
         .reset_index(drop=True)
     )
     return out
+
+
+@st.cache_data(show_spinner=False)
+def cargar_procedimientos_personas() -> pd.DataFrame:
+    df = pd.read_excel(RUTA_PROCEDIMIENTOS_PERSONAS)
+    return df.dropna(subset=["anio_insert", "tipo_procedimiento"])
+
+
+@st.cache_data(show_spinner=False)
+def procedimientos_personas_filtrado(clues_seleccionada: str) -> pd.DataFrame:
+    """Personas atendidas por tipo de procedimiento y año para el plan
+    de justicia seleccionado (columna `personas` del Excel de
+    procedimientos_personas), en el formato que espera
+    `crear_reporte_productividad` como parámetro `procedimientos_personas`.
+    """
+    df = cargar_procedimientos_personas()
+
+    if clues_seleccionada != "NACIONAL":
+        df = df[df["id"] == clues_seleccionada]
+
+    out = (
+        df.groupby(["anio_insert", "tipo_procedimiento"], as_index=False)
+        .agg(procedimientos=("procedimientos", "sum"), personas=("personas", "sum"))
+        .rename(columns={"anio_insert": "fecha"})
+    )
+    return out[["fecha", "tipo_procedimiento", "procedimientos", "personas"]]

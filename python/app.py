@@ -27,6 +27,7 @@ from data_io import (
     cargar_metas_clues,
     consultar_datos,
     opciones_selector_clues,
+    procedimientos_personas_filtrado,
 )
 
 COLOR_GUINDA = "#611232"
@@ -298,7 +299,7 @@ with dcol2:
                 clues_info=clues_info,
                 metas=metas_clues,
                 historicos=datos,
-                procedimientos_personas=None,
+                procedimientos_personas=procedimientos_personas_filtrado(clues_seleccionada),
             )
             pptx_buffer = io.BytesIO()
             presentacion.save(pptx_buffer)
