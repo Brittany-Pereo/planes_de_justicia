@@ -739,9 +739,9 @@ def grafica_consultas_periodos(df, fecha_inicio="2022-08-01", fecha_fin=None,
         xmin_sr = ult3["fecha"].min() - pd.Timedelta(days=15)
         xmax_sr = ult3["fecha"].max() + pd.Timedelta(days=15)
         ax.axvspan(xmin_sr, xmax_sr, color="#B22222", alpha=0.18, zorder=1)
-        ax.text(d["fecha"].max() - pd.Timedelta(days=25), ymax * 0.9,
+        ax.text(d["fecha"].max() - pd.Timedelta(days=25), ymax * 1.08,
                 "Posible subregistro\ntemporal", color="#7A1E3A",
-                fontweight="bold", fontsize=8.5, ha="center", linespacing=0.95)
+                fontweight="bold", fontsize=8.5, ha="center", va="bottom", linespacing=0.95)
 
     # Serie
     ax.plot(d["fecha"], d["consultas_totales"], color=color_linea, linewidth=1.1, zorder=3)
@@ -760,7 +760,7 @@ def grafica_consultas_periodos(df, fecha_inicio="2022-08-01", fecha_fin=None,
     # Texto superior de bandas
     for xmin, xmax, _fill, lab in bandas:
         centro = xmin + (xmax - xmin) / 2
-        ax.text(centro, ymax * 1.3, lab, ha="center", va="center",
+        ax.text(centro, ymax * 1.32, lab, ha="center", va="center",
                 fontweight="bold", fontsize=8, linespacing=0.95)
 
     # Flecha decreto de creación
@@ -781,7 +781,7 @@ def grafica_consultas_periodos(df, fecha_inicio="2022-08-01", fecha_fin=None,
         bbox=dict(boxstyle="round,pad=0.35", fc=fill_valuebox, ec="none"),
     )
 
-    ax.set_ylim(0, ymax * 1.23)
+    ax.set_ylim(0, ymax * 1.48)
     ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b-%y"))
     ax.get_yaxis().set_major_formatter(
@@ -789,7 +789,8 @@ def grafica_consultas_periodos(df, fecha_inicio="2022-08-01", fecha_fin=None,
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
     plt.setp(ax.get_yticklabels(), fontsize=8)
 
-    ax.set_title(titulo, fontsize=15, fontweight="bold", loc="left")
+    # El título va en el placeholder "fecha" de la diapositiva, no aquí
+    # dentro de la imagen, para no encimarse con las etiquetas de las bandas.
     ax.set_xlabel("")
     ax.set_ylabel("")
     for spine in ax.spines.values():
@@ -1372,15 +1373,15 @@ def crear_reporte_productividad(codigo_clues, clues_info, metas, historicos,
                                .agg(consultas_totales=("consulta_total", "sum"))
                                .sort_values("fecha"))
 
-    titulo_5 = (f"Consultas totales del IMSS Bienestar "
-                f"(agosto 2022 – {MESES_ES[fecha_fin_graf.month - 1]} {fecha_fin_graf.year})")
+    subtitulo_5 = f"Agosto 2022 – {MESES_ES[fecha_fin_graf.month - 1].capitalize()} {fecha_fin_graf.year}"
     g_periodos = grafica_consultas_periodos(
         serie_mensual_consultas, fecha_inicio="2022-08-01",
-        fecha_fin=str(fecha_fin_graf), titulo=titulo_5)
+        fecha_fin=str(fecha_fin_graf))
 
     lay = _buscar_layout(prs, "Una grafica")
     s = prs.slides.add_slide(lay)
     _set_texto_placeholder(s, lay, "Título 1", "Consultas totales por mes (2022-2026)")
+    _set_texto_placeholder(s, lay, "fecha", subtitulo_5)
     _colocar_imagen(s, lay, "ft", g_periodos)
 
     # Diapo 6: serie mensual de procedimientos quirúrgicos -----------------
@@ -1393,16 +1394,16 @@ def crear_reporte_productividad(codigo_clues, clues_info, metas, historicos,
                             .agg(consultas_totales=("procedimientos_qx", "sum"))
                             .sort_values("fecha"))
 
-        titulo_6 = (f"Procedimientos quirúrgicos del IMSS Bienestar "
-                    f"(agosto 2022 – {MESES_ES[fecha_fin_graf.month - 1]} {fecha_fin_graf.year})")
+        subtitulo_6 = f"Agosto 2022 – {MESES_ES[fecha_fin_graf.month - 1].capitalize()} {fecha_fin_graf.year}"
         g_periodos_pq = grafica_consultas_periodos(
             serie_mensual_pq, fecha_inicio="2022-08-01",
-            fecha_fin=str(fecha_fin_graf), titulo=titulo_6)
+            fecha_fin=str(fecha_fin_graf))
 
         lay = _buscar_layout(prs, "Una grafica")
         s = prs.slides.add_slide(lay)
         _set_texto_placeholder(s, lay, "Título 1",
                                "Procedimientos quirúrgicos por mes (2022-2026)")
+        _set_texto_placeholder(s, lay, "fecha", subtitulo_6)
         _colocar_imagen(s, lay, "ft", g_periodos_pq)
 
     return prs
