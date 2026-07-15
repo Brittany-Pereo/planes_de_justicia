@@ -6,11 +6,12 @@ Conversión a Python de R/utils_crear_pptx.R
 Genera el reporte de productividad del IMSS Bienestar en PowerPoint.
 
 Equivalencias de librerías respecto al código R original:
-    - officer            -> python-pptx      (lectura/escritura del .pptx)
-    - rvg::dml (tarjetas) -> formas nativas de python-pptx (editables)
-    - ggplot2            -> matplotlib        (gráficas insertadas como PNG)
-    - flextable          -> tablas nativas de python-pptx
-    - dplyr / tidyr      -> pandas
+    - officer                    -> python-pptx (lectura/escritura del .pptx)
+    - rvg::dml (tarjetas/gráficas) -> formas nativas de python-pptx
+      (rectángulos, líneas freeform, conectores, texto — todo editable
+      en PowerPoint, igual que rvg::dml convertía ggplot2 a DrawingML)
+    - flextable                  -> tablas nativas de python-pptx
+    - dplyr / tidyr              -> pandas
 
 La función principal `crear_reporte_productividad` recibe los mismos
 DataFrames que la versión de R y devuelve el objeto `Presentation`
@@ -32,34 +33,19 @@ Columnas esperadas de los DataFrames de entrada (igual que en R):
 
 from __future__ import annotations
 
-import os
-import tempfile
+import math
 from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import matplotlib.ticker
-
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from pptx.oxml.ns import qn
-
-# ---------------------------------------------------------------------------
-# Fuente preferida (Calibri como en R); si no existe, matplotlib usa la default
-# ---------------------------------------------------------------------------
-try:
-    plt.rcParams["font.family"] = "Calibri"
-except Exception:  # pragma: no cover
-    pass
 
 # Meses en español (evita depender del locale del sistema en Windows)
 MESES_ES = [
@@ -501,33 +487,15 @@ def _set_texto_placeholder(slide, layout, nombre, texto):
         ph.text = texto
 
 
-def _colocar_imagen(slide, layout, nombre, ruta_img, use_loc_size=False):
-    """Inserta una imagen ajustada dentro del placeholder (contain)."""
-    ph, (L, T, W, H) = _geom_placeholder(slide, layout, nombre)
-    if L is None:
+def _dibujar_en_placeholder(slide, layout, nombre, funcion_dibujo, *args, **kwargs):
+    """Resuelve el placeholder `nombre`, lo quita, y llama a
+    `funcion_dibujo(slide, box, *args, **kwargs)` para dibujar formas
+    nativas dentro de su geometria (L, T, W, H)."""
+    ph, box = _geom_placeholder(slide, layout, nombre)
+    if box[0] is None:
         return
     _quitar_placeholder(ph)
-    if use_loc_size:
-        slide.shapes.add_picture(ruta_img, L, T, width=W, height=H)
-        return
-    # Ajuste "contain" preservando proporción
-    from PIL import Image
-    try:
-        with Image.open(ruta_img) as im:
-            iw, ih = im.size
-        aspect_img = iw / ih
-    except Exception:
-        aspect_img = W / H
-    aspect_box = W / H
-    if aspect_img >= aspect_box:
-        w = W
-        h = int(W / aspect_img)
-    else:
-        h = H
-        w = int(H * aspect_img)
-    left = L + (W - w) // 2
-    top = T + (H - h) // 2
-    slide.shapes.add_picture(ruta_img, left, top, width=w, height=h)
+    funcion_dibujo(slide, box, *args, **kwargs)
 
 
 def _colocar_card(slide, layout, nombre, spec):
@@ -561,131 +529,259 @@ def imprimir_valueboxes_dinamicos(prs, layout_name, boxes_superior, boxes_inferi
 
 
 # ---------------------------------------------------------------------------
-# Gráficas (ggplot2 -> matplotlib)
+# Formas nativas de bajo nivel (editables en PowerPoint, sin imágenes)
 # ---------------------------------------------------------------------------
-_TMPDIR = tempfile.mkdtemp(prefix="pptx_graf_")
-_contador_img = [0]
+MESES_EN_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
-def _nueva_ruta_img():
-    _contador_img[0] += 1
-    return os.path.join(_TMPDIR, f"graf_{_contador_img[0]}.png")
+def _forma_rect(slide, left, top, width, height, color_hex, transparencia_pct=0):
+    """Rectángulo nativo relleno. `transparencia_pct`: 0 (opaco) a 100 (invisible)."""
+    shp = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, int(left), int(top), int(max(width, 1)), int(max(height, 1)))
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = _rgb(color_hex)
+    if transparencia_pct:
+        srgb = shp.fill._xPr.find(qn("a:solidFill")).find(qn("a:srgbClr"))
+        alpha = srgb.makeelement(qn("a:alpha"), {"val": str(int((100 - transparencia_pct) * 1000))})
+        srgb.append(alpha)
+    shp.line.fill.background()
+    shp.shadow.inherit = False
+    return shp
 
 
-def _estilo_minimal(ax, titulo, title_size=18, title_color="#6B7280"):
-    ax.set_title(titulo, fontsize=title_size, fontweight="bold",
-                 color=title_color, loc="center")
-    ax.set_xlabel("")
-    ax.set_ylabel("")
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.grid(False)
-    ax.tick_params(length=0)
+def _forma_texto(slide, left, top, width, height, texto, size=9, color_hex=col_texto,
+                 bold=False, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE,
+                 rotation=0, wrap=True, font="Calibri"):
+    tb = slide.shapes.add_textbox(int(left), int(top), int(max(width, 1)), int(max(height, 1)))
+    tf = tb.text_frame
+    tf.word_wrap = wrap
+    tf.vertical_anchor = anchor
+    tf.margin_left = 0
+    tf.margin_right = 0
+    tf.margin_top = 0
+    tf.margin_bottom = 0
+    for i, linea in enumerate(str(texto).split("\n")):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = align
+        r = p.add_run()
+        r.text = linea
+        r.font.size = Pt(size)
+        r.font.bold = bold
+        r.font.color.rgb = _rgb(color_hex)
+        r.font.name = font
+    if rotation:
+        tb.rotation = rotation
+    return tb
 
 
-def grafica_planeacion_historica(df, col_total, col_avance, titulo,
-                                 beige="#D9D2BE", verde="#2F6F63"):
+def _forma_ovalo(slide, cx, cy, radio, color_hex):
+    shp = slide.shapes.add_shape(
+        MSO_SHAPE.OVAL, int(cx - radio), int(cy - radio), int(radio * 2), int(radio * 2))
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = _rgb(color_hex)
+    shp.line.fill.background()
+    shp.shadow.inherit = False
+    return shp
+
+
+def _forma_linea_quebrada(slide, puntos, color_hex, width_pt=1.5):
+    """Línea poligonal nativa y editable (freeform) que conecta `puntos`
+    (lista de (x_emu, y_emu))."""
+    if len(puntos) < 2:
+        return None
+    fb = slide.shapes.build_freeform(int(puntos[0][0]), int(puntos[0][1]), scale=1.0)
+    fb.add_line_segments([(int(x), int(y)) for x, y in puntos[1:]], close=False)
+    shp = fb.convert_to_shape()
+    shp.fill.background()
+    shp.line.color.rgb = _rgb(color_hex)
+    shp.line.width = Pt(width_pt)
+    shp.shadow.inherit = False
+    return shp
+
+
+def _forma_flecha_vertical(slide, x, y_top, y_bottom, color_hex, width_pt=1.2):
+    """Conector vertical con punta de flecha arriba (en `y_top`)."""
+    conn = slide.shapes.add_connector(
+        MSO_CONNECTOR.STRAIGHT, int(x), int(y_top), int(x), int(y_bottom))
+    conn.line.color.rgb = _rgb(color_hex)
+    conn.line.width = Pt(width_pt)
+    ln = conn.line._get_or_add_ln()
+    head = ln.makeelement(qn("a:headEnd"), {"type": "triangle", "w": "med", "len": "med"})
+    ln.append(head)
+    return conn
+
+
+def _escala_bonita(valor_max, n_pasos_objetivo=5):
+    """Devuelve (paso, valor_redondeado) con incrementos 'bonitos' (1/2/2.5/5/10 x 10^n),
+    igual que el locator automático de matplotlib, para que el eje Y no muestre
+    números arbitrarios como 9,420,922."""
+    if valor_max <= 0:
+        return 1, n_pasos_objetivo
+    bruto = valor_max / n_pasos_objetivo
+    exponente = math.floor(math.log10(bruto))
+    base = 10 ** exponente
+    paso = base * 10
+    for m in (1, 2, 2.5, 5, 10):
+        if bruto <= m * base:
+            paso = m * base
+            break
+    return paso, math.ceil(valor_max / paso) * paso
+
+
+def _dibujar_eje_y(slide, plot_l, plot_w, baseline, plot_h, ymax_eje, valores_marca,
+                   ancho_etiqueta=None, gridlines=False):
+    """Dibuja las marcas del eje Y (texto, en `valores_marca`) y opcionalmente
+    líneas de rejilla, mapeadas proporcionalmente contra `ymax_eje`."""
+    ancho_etiqueta = ancho_etiqueta or Emu(900000)
+    for valor in valores_marca:
+        frac = (valor / ymax_eje) if ymax_eje else 0
+        y = baseline - frac * plot_h
+        _forma_texto(
+            slide, plot_l - ancho_etiqueta - Pt(4), y - Pt(7), ancho_etiqueta, Pt(14),
+            fmt_num(valor), size=8, color_hex=col_muted, align=PP_ALIGN.RIGHT,
+            anchor=MSO_ANCHOR.MIDDLE, wrap=False)
+        if gridlines and valor > 0:
+            _forma_rect(slide, plot_l, y, plot_w, Pt(0.6), "#E5E7EB")
+
+
+# ---------------------------------------------------------------------------
+# Gráficas de barras (histórico 2020-2025 y 2024-2026) — formas nativas
+# ---------------------------------------------------------------------------
+def dibujar_grafica_barras(slide, box, categorias, totales, avances, titulo,
+                           colores_total, colores_avance,
+                           etiquetas_total=None, etiquetas_avance=None,
+                           title_size=15):
+    """Barras de 'total' (claro) con 'avance' superpuesto (oscuro), con
+    etiquetas de valor — equivalente nativo de grafica_planeacion_*."""
+    L, T, W, H = box
+    n = len(categorias)
+    if n == 0:
+        return
+
+    if etiquetas_total is None:
+        etiquetas_total = [fmt_num(t) for t in totales]
+    if etiquetas_avance is None:
+        etiquetas_avance = [fmt_num(a) for a in avances]
+
+    alto_titulo = int(H * 0.13)
+    alto_categoria = Pt(16)
+    margen_izq = int(W * 0.12)
+    espacio_etiqueta_sup = int(H * 0.16)
+
+    _forma_texto(slide, L, T, W, alto_titulo, titulo, size=title_size,
+                color_hex=col_muted, bold=True, align=PP_ALIGN.CENTER)
+
+    plot_l = L + margen_izq
+    plot_t = T + alto_titulo + espacio_etiqueta_sup
+    plot_w = W - margen_izq
+    plot_h = H - alto_titulo - espacio_etiqueta_sup - alto_categoria
+    baseline = plot_t + plot_h
+
+    ymax_datos = max(max(totales, default=0), max(avances, default=0), 1)
+    paso, ymax_redondeado = _escala_bonita(ymax_datos, 5)
+    ymax_eje = max(ymax_redondeado, ymax_datos) * 1.16
+
+    valores_marca = [i * paso for i in range(int(ymax_eje // paso) + 1)]
+    _dibujar_eje_y(slide, plot_l, plot_w, baseline, plot_h, ymax_eje, valores_marca,
+                  ancho_etiqueta=margen_izq - Pt(4))
+
+    slot_w = plot_w / n
+    bar_w = slot_w * 0.60
+
+    for i, cat in enumerate(categorias):
+        slot_l = plot_l + i * slot_w
+        bar_l = slot_l + (slot_w - bar_w) / 2
+
+        h_total = (totales[i] / ymax_eje) * plot_h if ymax_eje else 0
+        h_avance = (avances[i] / ymax_eje) * plot_h if ymax_eje else 0
+
+        if h_total > 0:
+            _forma_rect(slide, bar_l, baseline - h_total, bar_w, h_total, colores_total[i])
+        if h_avance > 0:
+            _forma_rect(slide, bar_l, baseline - h_avance, bar_w, h_avance, colores_avance[i])
+
+        n_lineas_tot = etiquetas_total[i].count("\n") + 1
+        alto_et = Pt(13) * n_lineas_tot
+        _forma_texto(slide, slot_l, baseline - h_total - alto_et - Pt(3), slot_w, alto_et,
+                    etiquetas_total[i], size=9.5, color_hex="#000000", bold=True,
+                    align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.BOTTOM)
+
+        if h_avance > Pt(24):
+            n_lineas_av = etiquetas_avance[i].count("\n") + 1
+            alto_ea = Pt(12) * n_lineas_av
+            _forma_texto(slide, slot_l, baseline - h_avance + Pt(3), slot_w, alto_ea,
+                        etiquetas_avance[i], size=8.5, color_hex="#FFFFFF", bold=True,
+                        align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.TOP)
+
+        _forma_texto(slide, slot_l, baseline + Pt(3), slot_w, alto_categoria,
+                    str(cat), size=11, color_hex=col_muted, bold=True, align=PP_ALIGN.CENTER)
+
+
+def dibujar_grafica_planeacion_historica(slide, box, df, col_total, col_avance, titulo,
+                                         beige="#D9D2BE", verde="#2F6F63"):
     """Barras 2020-2025: total (beige) con avance (verde) superpuesto."""
     anios = list(range(2020, 2026))
     d = df.copy()
     d["anio_num"] = pd.to_numeric(d["anio"], errors="coerce").astype("Int64")
     d = d[d["anio_num"].isin(anios)]
     d = d.set_index("anio_num").reindex(anios)
-    totales = d[col_total].fillna(0).values
-    avances = d[col_avance].fillna(0).values
+    totales = d[col_total].fillna(0).astype(float).tolist()
+    avances = d[col_avance].fillna(0).astype(float).tolist()
 
-    fig, ax = plt.subplots(figsize=(6.4, 4.2), dpi=150)
-    x = np.arange(len(anios))
-    ax.bar(x, totales, width=0.82, color=beige, zorder=1)
-    ax.bar(x, avances, width=0.82, color=verde, zorder=2)
-
-    for xi, tot in zip(x, totales):
-        ax.text(xi, tot, fmt_num(tot), ha="center", va="bottom",
-                fontweight="bold", fontsize=9.5, color="black")
-    for xi, av in zip(x, avances):
-        ax.text(xi, av, fmt_num(av), ha="center", va="top",
-                fontweight="bold", fontsize=8, color="white")
-
-    ax.set_xticks(x)
-    ax.set_xticklabels([str(a) for a in anios], fontweight="bold", color="#6B7280")
-    ax.tick_params(axis="y", colors="#6B7280")
-    ymax = max(totales.max(), avances.max(), 1)
-    ax.set_ylim(0, ymax * 1.16)
-    ax.get_yaxis().set_major_formatter(
-        matplotlib.ticker.FuncFormatter(lambda v, _: fmt_num(v)))
-    _estilo_minimal(ax, titulo)
-
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-    ruta = _nueva_ruta_img()
-    fig.tight_layout()
-    fig.savefig(ruta, facecolor="white", bbox_inches="tight")
-    plt.close(fig)
-    return ruta
+    dibujar_grafica_barras(
+        slide, box, categorias=[str(a) for a in anios],
+        totales=totales, avances=avances, titulo=titulo,
+        colores_total=[beige] * len(anios), colores_avance=[verde] * len(anios),
+    )
 
 
-def grafica_planeacion_2024_2026(df, col_total, col_avance, titulo,
-                                 beige="#D9D2BE", verde="#2F6F63",
-                                 beige_2026="#A99F86", verde_2026="#1E5B4F"):
+def dibujar_grafica_planeacion_2024_2026(slide, box, df, col_total, col_avance, titulo,
+                                         beige="#D9D2BE", verde="#2F6F63",
+                                         beige_2026="#A99F86", verde_2026="#1E5B4F"):
     """Barras 2024-2026 con etiquetas especiales de 'Meta 2026' / 'Avance'."""
     anios = [2024, 2025, 2026]
     d = df.copy()
     d["anio_num"] = pd.to_numeric(d["anio"], errors="coerce").astype("Int64")
     d = d[d["anio_num"].isin(anios)]
     d = d.set_index("anio_num").reindex(anios)
-    totales = d[col_total].fillna(0).values.astype(float)
-    avances = d[col_avance].fillna(0).values.astype(float)
+    totales = d[col_total].fillna(0).astype(float).tolist()
+    avances = d[col_avance].fillna(0).astype(float).tolist()
 
-    fig, ax = plt.subplots(figsize=(6.4, 4.2), dpi=150)
-    x = np.arange(len(anios))
-    colores_total = [beige_2026 if a == 2026 else beige for a in anios]
-    colores_avance = [verde_2026 if a == 2026 else verde for a in anios]
-    ax.bar(x, totales, width=0.82, color=colores_total, zorder=1)
-    ax.bar(x, avances, width=0.82, color=colores_avance, zorder=2)
-
-    for xi, a, tot in zip(x, anios, totales):
+    etiquetas_total, etiquetas_avance = [], []
+    for a, tot, av in zip(anios, totales, avances):
         if a == 2026:
-            etiqueta = f"Meta 2026\n{fmt_num(tot)}"
-        else:
-            etiqueta = fmt_num(tot)
-        ax.text(xi, tot, etiqueta, ha="center", va="bottom",
-                fontweight="bold", fontsize=9.5, color="black", linespacing=0.95)
-
-    for xi, a, av, tot in zip(x, anios, avances, totales):
-        if a == 2026:
+            etiquetas_total.append(f"Meta 2026\n{fmt_num(tot)}")
             pct = (av / tot) if tot > 0 else np.nan
             pct_txt = "s/d" if pd.isna(pct) else f"{int(round(pct * 100))}%"
-            etiqueta = f"Avance\n{fmt_num(av)}\n({pct_txt})"
+            etiquetas_avance.append(f"Avance\n{fmt_num(av)}\n({pct_txt})")
         else:
-            etiqueta = fmt_num(av)
-        ax.text(xi, av, etiqueta, ha="center", va="top",
-                fontweight="bold", fontsize=8, color="white", linespacing=0.95)
+            etiquetas_total.append(fmt_num(tot))
+            etiquetas_avance.append(fmt_num(av))
 
-    ax.set_xticks(x)
-    ax.set_xticklabels([str(a) for a in anios], fontweight="bold", color="#6B7280")
-    ax.tick_params(axis="y", colors="#6B7280")
-    ymax = max(totales.max(), avances.max(), 1)
-    ax.set_ylim(0, ymax * 1.16)
-    ax.get_yaxis().set_major_formatter(
-        matplotlib.ticker.FuncFormatter(lambda v, _: fmt_num(v)))
-    _estilo_minimal(ax, titulo)
+    colores_total = [beige_2026 if a == 2026 else beige for a in anios]
+    colores_avance = [verde_2026 if a == 2026 else verde for a in anios]
 
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-    ruta = _nueva_ruta_img()
-    fig.tight_layout()
-    fig.savefig(ruta, facecolor="white", bbox_inches="tight")
-    plt.close(fig)
-    return ruta
+    dibujar_grafica_barras(
+        slide, box, categorias=[str(a) for a in anios],
+        totales=totales, avances=avances, titulo=titulo,
+        colores_total=colores_total, colores_avance=colores_avance,
+        etiquetas_total=etiquetas_total, etiquetas_avance=etiquetas_avance,
+    )
 
 
-def grafica_consultas_periodos(df, fecha_inicio="2022-08-01", fecha_fin=None,
-                               titulo="Consultas totales del IMSS Bienestar",
-                               color_linea="#6B6B6B", verde_punto="#1F5B50",
-                               fill_2223="#EFEFEF", fill_2024="#E9DDCC",
-                               fill_2025="#F4F0EA", fill_2026="#E9DDCC",
-                               fill_valuebox="#B99C6D"):
-    """Serie temporal mensual con bandas por periodo y anotaciones."""
+# ---------------------------------------------------------------------------
+# Gráfica de serie temporal (consultas/procedimientos por mes) — formas nativas
+# ---------------------------------------------------------------------------
+def dibujar_grafica_consultas_periodos(slide, box, df, fecha_inicio="2022-08-01", fecha_fin=None,
+                                       color_linea="#6B6B6B", verde_punto="#1F5B50",
+                                       fill_2223="#EFEFEF", fill_2024="#E9DDCC",
+                                       fill_2025="#F4F0EA", fill_2026="#E9DDCC",
+                                       fill_valuebox="#B99C6D"):
+    """Serie temporal mensual con bandas por periodo y anotaciones, dibujada
+    con formas nativas de PowerPoint (línea freeform editable, rectángulos,
+    óvalos y textos) en vez de una imagen."""
+    L, T, W, H = box
     hoy_mes = _floor_month(date.today())
     if fecha_fin is None:
         fecha_fin = hoy_mes
@@ -700,111 +796,152 @@ def grafica_consultas_periodos(df, fecha_inicio="2022-08-01", fecha_fin=None,
           (d["fecha"].dt.date < hoy_mes)].sort_values("fecha")
 
     if len(d) == 0:
-        fig, ax = plt.subplots(figsize=(10, 4.5), dpi=150)
-        _estilo_minimal(ax, titulo, title_size=15)
-        ruta = _nueva_ruta_img()
-        fig.savefig(ruta, facecolor="white", bbox_inches="tight")
-        plt.close(fig)
-        return ruta
+        _forma_texto(slide, L, T, W, H, "Sin datos suficientes para este período",
+                    size=12, color_hex=col_muted)
+        return
 
-    ymax = d["consultas_totales"].max()
-    ymin = d["consultas_totales"].min()
+    ymax = float(d["consultas_totales"].max())
+    ymin = float(d["consultas_totales"].min())
+    ymax_eje = max(ymax * 1.48, 1)
+    _paso_eje, _ymax_marcas = _escala_bonita(ymax, 5)
+    valores_marca_y = [i * _paso_eje for i in range(int(ymax_eje // _paso_eje) + 1)]
 
+    fecha_fin_banda = _ceiling_month(fecha_fin)
     bandas = [
-        (date(2022, 8, 1), date(2024, 1, 1), fill_2223, "2022–2023\nAños de transición"),
+        (fecha_inicio, date(2024, 1, 1), fill_2223, "2022–2023\nAños de transición"),
         (date(2024, 1, 1), date(2025, 1, 1), fill_2024, "2024\nPrimer año de operación"),
         (date(2025, 1, 1), date(2026, 1, 1), fill_2025, "2025\nSegundo año de operación"),
-        (date(2026, 1, 1), _ceiling_month(fecha_fin), fill_2026, "2026\nTercer año de operación"),
+        (date(2026, 1, 1), fecha_fin_banda, fill_2026, "2026\nTercer año de operación"),
     ]
 
+    dias_pad = max((fecha_fin_banda - fecha_inicio).days * 0.035, 10)
+    x0_ord = fecha_inicio.toordinal() - dias_pad
+    x1_ord = fecha_fin_banda.toordinal() + dias_pad
+
+    margen_izq = int(W * 0.075)
+    margen_der = int(W * 0.015)
+    margen_sup = int(H * 0.03)
+    margen_inf = int(H * 0.17)
+
+    plot_l = L + margen_izq
+    plot_t = T + margen_sup
+    plot_w = W - margen_izq - margen_der
+    plot_h = H - margen_sup - margen_inf
+    baseline = plot_t + plot_h
+
+    def _ord(valor_fecha):
+        if hasattr(valor_fecha, "toordinal"):
+            return valor_fecha.toordinal()
+        return pd.Timestamp(valor_fecha).toordinal()
+
+    def xmap(valor_fecha):
+        frac = (_ord(valor_fecha) - x0_ord) / (x1_ord - x0_ord)
+        return plot_l + frac * plot_w
+
+    def ymap(valor):
+        frac = (valor / ymax_eje) if ymax_eje else 0
+        return baseline - frac * plot_h
+
+    # Fondo blanco del área de la gráfica
+    _forma_rect(slide, L, T, W, H, "#FFFFFF")
+
+    # Bandas de periodo
+    for xmin_b, xmax_b, fill, _lab in bandas:
+        x_l = xmap(xmin_b)
+        x_r = xmap(xmax_b)
+        _forma_rect(slide, x_l, plot_t, x_r - x_l, plot_h, fill)
+
+    # Rejilla horizontal + etiquetas del eje Y
+    _dibujar_eje_y(slide, plot_l, plot_w, baseline, plot_h, ymax_eje, valores_marca_y,
+                  ancho_etiqueta=margen_izq - Pt(4), gridlines=True)
+
+    # Zona posible subregistro (últimos 3 meses)
+    ult3 = d.tail(3)
+    if len(ult3):
+        xmin_sr = (ult3["fecha"].min() - pd.Timedelta(days=15)).date()
+        xmax_sr = (ult3["fecha"].max() + pd.Timedelta(days=15)).date()
+        x_l = xmap(xmin_sr)
+        x_r = xmap(xmax_sr)
+        _forma_rect(slide, x_l, plot_t, x_r - x_l, plot_h, "#B22222", transparencia_pct=82)
+        _forma_texto(
+            slide, xmap(d["fecha"].max().date()) - Pt(70), ymap(ymax * 1.08), Pt(140), Pt(26),
+            "Posible subregistro\ntemporal", size=8.5, color_hex="#7A1E3A", bold=True,
+            align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.TOP)
+
+    # Serie: línea nativa (freeform, editable) + marcador en cada punto
+    puntos_linea = [(xmap(f.date()), ymap(v)) for f, v in zip(d["fecha"], d["consultas_totales"])]
+    _forma_linea_quebrada(slide, puntos_linea, color_linea, width_pt=1.3)
+    for x, y in puntos_linea:
+        _forma_ovalo(slide, x, y, Pt(1.6), color_linea)
+
+    # Puntos destacados (mismo mes que el corte, años anteriores a 2026)
     mes_destacado = fecha_fin.month
     puntos_destacados = d[(d["fecha"].dt.month == mes_destacado) &
                           (d["fecha"].dt.year < 2026)].drop_duplicates("fecha")
+    for _, row in puntos_destacados.iterrows():
+        x = xmap(row["fecha"].date())
+        y = ymap(row["consultas_totales"])
+        _forma_ovalo(slide, x, y, Pt(4.5), verde_punto)
+        etiqueta = f"{fmt_num(row['consultas_totales'])}\n{_mes_abbr_title(row['fecha'])}"
+        _forma_texto(slide, x - Pt(45), y - Pt(38), Pt(90), Pt(30), etiqueta,
+                    size=8, color_hex="#000000", bold=True,
+                    align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.BOTTOM)
 
+    # Texto superior de bandas
+    for xmin_b, xmax_b, _fill, lab in bandas:
+        centro = xmap(xmin_b) + (xmap(xmax_b) - xmap(xmin_b)) / 2
+        _forma_texto(slide, centro - Pt(70), ymap(ymax * 1.32), Pt(140), Pt(26), lab,
+                    size=8, color_hex="#000000", bold=True,
+                    align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.TOP)
+
+    # Flecha "Decreto de creación"
+    x_decreto = xmap(date(2022, 8, 15))
+    _forma_flecha_vertical(slide, x_decreto, ymap(ymax * 1.02), ymap(ymin * 0.95), verde_punto)
+    _forma_texto(slide, x_decreto + Pt(6), ymap(ymax * 1.05) - Pt(4), Pt(120), Pt(26),
+                "Decreto de creación\ndel IMSS Bienestar", size=7.5, color_hex="#000000",
+                bold=True, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP)
+
+    # Recuadro (valuebox) del último dato
     fecha_ultimo = d["fecha"].max()
     valor_ultimo_ser = d.loc[d["fecha"] == fecha_ultimo, "consultas_totales"]
     valor_ultimo = valor_ultimo_ser.iloc[0] if len(valor_ultimo_ser) else 0
     if pd.isna(valor_ultimo):
         valor_ultimo = 0
+    x_vb = xmap(fecha_ultimo.date())
+    y_vb = ymap(valor_ultimo)
+    vb_w, vb_h = Pt(72), Pt(30)
+    vb = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, int(x_vb - vb_w / 2), int(y_vb - vb_h - Pt(10)),
+        int(vb_w), int(vb_h))
+    vb.fill.solid()
+    vb.fill.fore_color.rgb = _rgb(fill_valuebox)
+    vb.line.fill.background()
+    vb.shadow.inherit = False
+    tf = vb.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+    for i, linea in enumerate([fmt_num(valor_ultimo), _mes_title(fecha_ultimo)]):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = linea
+        r.font.size = Pt(9.5)
+        r.font.bold = True
+        r.font.color.rgb = _rgb("#FFFFFF")
+        r.font.name = "Calibri"
 
-    fig, ax = plt.subplots(figsize=(10, 4.5), dpi=150)
-
-    # Bandas por periodo
-    for xmin, xmax, fill, _lab in bandas:
-        ax.axvspan(xmin, xmax, color=fill, zorder=0)
-
-    # Zona posible subregistro (últimos 3 meses)
-    ult3 = d.tail(3)
-    if len(ult3):
-        xmin_sr = ult3["fecha"].min() - pd.Timedelta(days=15)
-        xmax_sr = ult3["fecha"].max() + pd.Timedelta(days=15)
-        ax.axvspan(xmin_sr, xmax_sr, color="#B22222", alpha=0.18, zorder=1)
-        ax.text(d["fecha"].max() - pd.Timedelta(days=25), ymax * 1.08,
-                "Posible subregistro\ntemporal", color="#7A1E3A",
-                fontweight="bold", fontsize=8.5, ha="center", va="bottom", linespacing=0.95)
-
-    # Serie
-    ax.plot(d["fecha"], d["consultas_totales"], color=color_linea, linewidth=1.1, zorder=3)
-    ax.scatter(d["fecha"], d["consultas_totales"], color=color_linea, s=14, zorder=4)
-
-    # Puntos destacados
-    if len(puntos_destacados):
-        ax.scatter(puntos_destacados["fecha"], puntos_destacados["consultas_totales"],
-                   color=verde_punto, s=55, zorder=5)
-        for _, row in puntos_destacados.iterrows():
-            etiqueta = f"{fmt_num(row['consultas_totales'])}\n{_mes_abbr_title(row['fecha'])}"
-            ax.text(row["fecha"], row["consultas_totales"], etiqueta,
-                    fontweight="bold", fontsize=8, ha="center", va="bottom",
-                    linespacing=0.95)
-
-    # Texto superior de bandas
-    for xmin, xmax, _fill, lab in bandas:
-        centro = xmin + (xmax - xmin) / 2
-        ax.text(centro, ymax * 1.32, lab, ha="center", va="center",
-                fontweight="bold", fontsize=8, linespacing=0.95)
-
-    # Flecha decreto de creación
-    ax.annotate(
-        "", xy=(date(2022, 8, 15), ymax * 1.02),
-        xytext=(date(2022, 8, 15), ymin * 0.95),
-        arrowprops=dict(arrowstyle="->", color=verde_punto, linewidth=1.0),
-    )
-    ax.text(date(2022, 9, 20), ymax * 1.05, "Decreto de creación\ndel IMSS Bienestar",
-            ha="left", fontweight="bold", fontsize=7.5, linespacing=0.95)
-
-    # Valuebox del último dato
-    ax.annotate(
-        f"{fmt_num(valor_ultimo)}\n{_mes_title(fecha_ultimo)}",
-        xy=(fecha_ultimo, valor_ultimo), ha="center", va="bottom",
-        color="white", fontweight="bold", fontsize=9.5, linespacing=0.95,
-        xytext=(0, 8), textcoords="offset points",
-        bbox=dict(boxstyle="round,pad=0.35", fc=fill_valuebox, ec="none"),
-    )
-
-    ax.set_ylim(0, ymax * 1.48)
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b-%y"))
-    ax.get_yaxis().set_major_formatter(
-        matplotlib.ticker.FuncFormatter(lambda v, _: fmt_num(v)))
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
-    plt.setp(ax.get_yticklabels(), fontsize=8)
-
-    # El título va en el placeholder "fecha" de la diapositiva, no aquí
-    # dentro de la imagen, para no encimarse con las etiquetas de las bandas.
-    ax.set_xlabel("")
-    ax.set_ylabel("")
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.grid(axis="y", color="#E5E7EB", linewidth=0.6)
-    ax.tick_params(length=0)
-
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-    ruta = _nueva_ruta_img()
-    fig.tight_layout()
-    fig.savefig(ruta, facecolor="white", bbox_inches="tight")
-    plt.close(fig)
-    return ruta
+    # Etiquetas del eje X (cada 2 meses)
+    eje_inicio = pd.Timestamp(fecha_inicio).replace(day=1) - pd.DateOffset(months=2)
+    eje_fin = pd.Timestamp(fecha_fin_banda) + pd.DateOffset(months=2)
+    for tick in pd.date_range(eje_inicio, eje_fin, freq="2MS"):
+        x = xmap(tick.date())
+        if x < plot_l - Pt(5) or x > plot_l + plot_w + Pt(5):
+            continue
+        etiqueta = f"{MESES_EN_ABBR[tick.month - 1]}-{str(tick.year)[2:]}"
+        _forma_texto(slide, x - Pt(20), baseline + Pt(4), Pt(40), Pt(22), etiqueta,
+                    size=7.5, color_hex=col_muted, bold=False, align=PP_ALIGN.CENTER,
+                    anchor=MSO_ANCHOR.TOP, rotation=45, wrap=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1240,25 +1377,24 @@ def crear_reporte_productividad(codigo_clues, clues_info, metas, historicos,
                         (datos_historicos_2020_2025["egresos"] > 0)).any())
 
     if hay_consultas_2020:
-        graf_consultas = grafica_planeacion_historica(
-            datos_historicos_2020_2025, "total_consultas_anual", "total_consultas",
-            "Consultas totales")
-
         if hay_qx_2020:
-            graf_qx = grafica_planeacion_historica(
-                datos_historicos_2020_2025, "qx_anual", "qx",
-                "Procedimientos quirúrgicos")
             lay = _buscar_layout(prs, "1_Historico consultas y procedimientos")
             s = prs.slides.add_slide(lay)
             _set_texto_placeholder(s, lay, "Título 1", "Productividad IMSS Bienestar")
-            _colocar_imagen(s, lay, "Grafica 1", graf_consultas)
-            _colocar_imagen(s, lay, "Grafica 2", graf_qx)
+            _dibujar_en_placeholder(s, lay, "Grafica 1", dibujar_grafica_planeacion_historica,
+                                    datos_historicos_2020_2025, "total_consultas_anual",
+                                    "total_consultas", "Consultas totales")
+            _dibujar_en_placeholder(s, lay, "Grafica 2", dibujar_grafica_planeacion_historica,
+                                    datos_historicos_2020_2025, "qx_anual", "qx",
+                                    "Procedimientos quirúrgicos")
             _set_texto_placeholder(s, lay, "fecha", f"Del 01 de enero al {fecha_portada}")
         else:
             lay = _buscar_layout(prs, "1_Historico consultas")
             s = prs.slides.add_slide(lay)
             _set_texto_placeholder(s, lay, "Título 1", "Productividad IMSS Bienestar")
-            _colocar_imagen(s, lay, "Grafica 1", graf_consultas)
+            _dibujar_en_placeholder(s, lay, "Grafica 1", dibujar_grafica_planeacion_historica,
+                                    datos_historicos_2020_2025, "total_consultas_anual",
+                                    "total_consultas", "Consultas totales")
             _set_texto_placeholder(s, lay, "fecha", f"Del 01 de enero al {fecha_portada}")
 
     # Diapo 4: 2024-2026 con tablas ----------------------------------------
@@ -1313,9 +1449,6 @@ def crear_reporte_productividad(codigo_clues, clues_info, metas, historicos,
     hay_qx_2426 = bool(((d2426["qx"] > 0) | (d2426["egresos"] > 0)).any())
 
     if hay_consultas_2426:
-        graf_consultas_2426 = grafica_planeacion_2024_2026(
-            d2426, "total_consultas_meta", "total_consultas", "Consultas totales")
-
         indicadores_consulta, etiquetas_consulta = [], []
         if hay_indicador_2026(d2426, "consulta_gral"):
             indicadores_consulta.append("consulta_gral")
@@ -1328,9 +1461,6 @@ def crear_reporte_productividad(codigo_clues, clues_info, metas, historicos,
             d2426, indicadores_consulta, etiquetas_consulta, "Acumulado")
 
         if hay_qx_2426:
-            graf_qx_2426 = grafica_planeacion_2024_2026(
-                d2426, "qx_meta", "qx", "Procedimientos quirúrgicos")
-
             indicadores_proc, etiquetas_proc = [], []
             if hay_indicador_2026(d2426, "qx"):
                 indicadores_proc.append("qx")
@@ -1345,8 +1475,11 @@ def crear_reporte_productividad(codigo_clues, clues_info, metas, historicos,
             lay = _buscar_layout(prs, "Historico consultas y procedimientos")
             s = prs.slides.add_slide(lay)
             _set_texto_placeholder(s, lay, "Título 1", "Productividad IMSS Bienestar")
-            _colocar_imagen(s, lay, "Grafica 1", graf_consultas_2426)
-            _colocar_imagen(s, lay, "Grafica 2", graf_qx_2426)
+            _dibujar_en_placeholder(s, lay, "Grafica 1", dibujar_grafica_planeacion_2024_2026,
+                                    d2426, "total_consultas_meta", "total_consultas",
+                                    "Consultas totales")
+            _dibujar_en_placeholder(s, lay, "Grafica 2", dibujar_grafica_planeacion_2024_2026,
+                                    d2426, "qx_meta", "qx", "Procedimientos quirúrgicos")
             ft_planeacion(s, lay, "tabla_1", tabla_consultas,
                           w1=2.70, w2=0.90, w3=0.90, w4=0.80,
                           size_header=8, size_body=7.5, h_fila=0.28)
@@ -1358,7 +1491,9 @@ def crear_reporte_productividad(codigo_clues, clues_info, metas, historicos,
             lay = _buscar_layout(prs, "Historico consultas")
             s = prs.slides.add_slide(lay)
             _set_texto_placeholder(s, lay, "Título 1", "Productividad IMSS Bienestar")
-            _colocar_imagen(s, lay, "Grafica 1", graf_consultas_2426)
+            _dibujar_en_placeholder(s, lay, "Grafica 1", dibujar_grafica_planeacion_2024_2026,
+                                    d2426, "total_consultas_meta", "total_consultas",
+                                    "Consultas totales")
             ft_planeacion(s, lay, "tabla_1", tabla_consultas,
                           w1=4.60, w2=1.35, w3=1.35, w4=1.40,
                           size_header=11, size_body=10, h_fila=0.38)
@@ -1374,15 +1509,14 @@ def crear_reporte_productividad(codigo_clues, clues_info, metas, historicos,
                                .sort_values("fecha"))
 
     subtitulo_5 = f"Agosto 2022 – {MESES_ES[fecha_fin_graf.month - 1].capitalize()} {fecha_fin_graf.year}"
-    g_periodos = grafica_consultas_periodos(
-        serie_mensual_consultas, fecha_inicio="2022-08-01",
-        fecha_fin=str(fecha_fin_graf))
 
     lay = _buscar_layout(prs, "Una grafica")
     s = prs.slides.add_slide(lay)
-    _set_texto_placeholder(s, lay, "Título 1", "Consultas totales por mes (2022-2026)")
+    _set_texto_placeholder(s, lay, "Título 1", "Consultas totales por mes")
     _set_texto_placeholder(s, lay, "fecha", subtitulo_5)
-    _colocar_imagen(s, lay, "ft", g_periodos)
+    _dibujar_en_placeholder(s, lay, "ft", dibujar_grafica_consultas_periodos,
+                            serie_mensual_consultas, fecha_inicio="2022-08-01",
+                            fecha_fin=str(fecha_fin_graf))
 
     # Diapo 6: serie mensual de procedimientos quirúrgicos -----------------
     if hay_indicador_2026(datos_consulta_funcion, "qx"):
@@ -1395,15 +1529,13 @@ def crear_reporte_productividad(codigo_clues, clues_info, metas, historicos,
                             .sort_values("fecha"))
 
         subtitulo_6 = f"Agosto 2022 – {MESES_ES[fecha_fin_graf.month - 1].capitalize()} {fecha_fin_graf.year}"
-        g_periodos_pq = grafica_consultas_periodos(
-            serie_mensual_pq, fecha_inicio="2022-08-01",
-            fecha_fin=str(fecha_fin_graf))
 
         lay = _buscar_layout(prs, "Una grafica")
         s = prs.slides.add_slide(lay)
-        _set_texto_placeholder(s, lay, "Título 1",
-                               "Procedimientos quirúrgicos por mes (2022-2026)")
+        _set_texto_placeholder(s, lay, "Título 1", "Procedimientos quirúrgicos por mes")
         _set_texto_placeholder(s, lay, "fecha", subtitulo_6)
-        _colocar_imagen(s, lay, "ft", g_periodos_pq)
+        _dibujar_en_placeholder(s, lay, "ft", dibujar_grafica_consultas_periodos,
+                                serie_mensual_pq, fecha_inicio="2022-08-01",
+                                fecha_fin=str(fecha_fin_graf))
 
     return prs
